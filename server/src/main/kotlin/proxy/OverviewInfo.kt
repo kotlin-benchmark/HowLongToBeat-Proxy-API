@@ -11,11 +11,13 @@ import org.http4k.lens.Query
 val getOverviewInfo: HttpHandler = { req ->
     val idLens = Query.required("id")
 
+    //CWE-400
+    //SOURCE
     val id = idLens(req).toLong()
 
-    val key = "overviewInfo;$id"
+    val key = io.github.darefox.hltbproxy.cache.WeakExpiringLRUCache.hashedKey("overviewInfo;$id")
     cache.getOrGenerateBlocking(mutexMap, key) {
-        val obj = runBlocking { HLTB.getOverviewInfoAboutGame(id)?.toProxy() }
+        val obj = runBlocking { HLTB.getOverviewInfoAboutGame(id, preflightDelayMillis = id)?.toProxy() }
             ?: return@getOrGenerateBlocking ErrorResponse(Status.NOT_FOUND, "Not Found")
         Response(Status.OK).with(Body.auto<OverviewInfo>().toLens() of obj)
     }

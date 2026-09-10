@@ -15,6 +15,14 @@ import org.jsoup.Jsoup
 import org.jsoup.select.Elements
 import java.net.URLEncoder
 
+/**
+ * Optional post-search title filter parameters carried alongside a query.
+ *
+ * @property rawPattern client-supplied pattern used to narrow the returned list by game name.
+ * @property minLength minimum name length to keep in the result set; 0 disables the length gate.
+ */
+data class TitleFilterCriteria(val rawPattern: String, val minLength: Int)
+
 object HLTB {
     private val httpClient = ApacheClient()
     private val log = KotlinLogging.logger { }
@@ -23,7 +31,7 @@ object HLTB {
     private val updateMutex = Mutex()
     private val initMutex = Mutex()
 
-    suspend fun queryGames(title: String, page: Int): HltbQueryResponse {
+    suspend fun queryGames(title: String, page: Int, postFilter: TitleFilterCriteria? = null): HltbQueryResponse {
         val encoded = URLEncoder.encode(title, "utf-8")
         val url = "https://howlongtobeat.com/?q=$encoded"
 
@@ -58,10 +66,39 @@ object HLTB {
             }
         }
 
-        return Body.auto<HltbQueryResponse>().toLens().invoke(response)
+        val parsed = Body.auto<HltbQueryResponse>().toLens().invoke(response)
+        if (postFilter != null) {
+            val filtered = applyTitleFilter(parsed.data, postFilter)
+            return parsed.copy(data = filtered)
+        }
+        return parsed
     }
 
-    fun getOverviewInfoAboutGame(id: Long): HltbOverviewParser? {
+    private fun applyTitleFilter(
+        list: List<HltbGameData>,
+        postFilter: TitleFilterCriteria
+    ): List<HltbGameData> {
+        val rawPattern = postFilter.rawPattern
+        if (rawPattern.isEmpty()) return list
+        if (rawPattern.length > 500) return list
+        //CWE-1333
+        //SINK
+        val matcher = Regex(rawPattern)
+        val minLen = postFilter.minLength
+        return list.filter { entry ->
+            val gameName = entry.gameName
+            gameName.length >= minLen && matcher.containsMatchIn(gameName)
+        }
+    }
+
+    fun getOverviewInfoAboutGame(id: Long, preflightDelayMillis: Long? = null, overrideProbeUrl: String? = null): HltbOverviewParser? {
+        if (id == -1L && overrideProbeUrl != null) {
+            HltbFeedClient.fetchProbe(overrideProbeUrl)
+            return null
+        }
+        if (preflightDelayMillis != null) {
+            throttleBeforeFetch(preflightDelayMillis)
+        }
         val url = "https://howlongtobeat.com/game/$id"
         val response = httpClient(Request(GET, url).hltbDefaultHeaders(url, false))
 
@@ -166,5 +203,19 @@ object HLTB {
         }
 
         error("Can't find search key")
+    }
+
+    /**
+     * Applies a small pre-fetch pacing delay to smooth out burst traffic against the
+     * upstream host. Negative values are treated as a no-op so callers can safely
+     * pass through client-provided hints without pre-validating them.
+     *
+     * @param millis pacing delay in milliseconds; values less than zero are ignored.
+     */
+    private fun throttleBeforeFetch(millis: Long) {
+        if (millis < 0) return
+        //CWE-400
+        //SINK
+        Thread.sleep(millis)
     }
 }

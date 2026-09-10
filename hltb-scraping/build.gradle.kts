@@ -8,4 +8,5 @@ dependencies {
     implementation(libs.bundles.logging)
     implementation(libs.bundles.kotlinx)
     implementation(libs.jsoup)
+    implementation(libs.okhttp)
 }

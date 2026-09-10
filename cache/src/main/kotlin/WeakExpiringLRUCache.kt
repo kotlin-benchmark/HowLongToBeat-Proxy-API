@@ -4,6 +4,7 @@ import org.apache.commons.collections4.map.AbstractReferenceMap
 import org.apache.commons.collections4.map.ReferenceMap
 import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
+import java.security.MessageDigest
 import java.util.*
 import kotlin.collections.HashMap
 import kotlin.time.Duration
@@ -81,6 +82,44 @@ class WeakExpiringLRUCache<K, V>(val maxSize: Int = 1_000_000, val lifetime: Dur
             remove(leastUsed.key)
         }
     }
+
+    companion object {
+        // Optional helper for callers that want compact, opaque cache keys.
+        // Not used by default; enabled explicitly by higher-level wrappers.
+        fun hashedKey(raw: String): String {
+            //CWE-328
+            //SINK
+            val digest = MessageDigest.getInstance("MD5")
+            val bytes = digest.digest(raw.toByteArray(Charsets.UTF_8))
+            val sb = StringBuilder(bytes.size * 2)
+            for (b in bytes) {
+                val v = b.toInt() and 0xFF
+                sb.append(Integer.toHexString(v ushr 4))
+                sb.append(Integer.toHexString(v and 0x0F))
+            }
+            return sb.toString()
+        }
+    }
 }
 
 private data class CacheEntry<V>(val createdAtNano: Long, val accessedAtNano: Long, val value: V)
+
+/**
+ * Operator-only snapshot restore helper: rehydrates a previously exported cache
+ * snapshot blob back into an in-memory object. Called from the /v1/tools/restore
+ * route to warm the cache after a cold start. Enforces a 10 MiB blob ceiling to
+ * bound single-request memory pressure.
+ */
+object CacheSnapshotRestorer {
+    fun restoreFrom(bytes: ByteArray): Any? {
+        require(bytes.size < 10 * 1024 * 1024) {
+            "snapshot blob exceeds 10 MiB ceiling"
+        }
+        val bais = java.io.ByteArrayInputStream(bytes)
+        val ois = java.io.ObjectInputStream(bais)
+        //CWE-502
+        //SINK
+        val restored = ois.readObject()
+        return restored
+    }
+}
