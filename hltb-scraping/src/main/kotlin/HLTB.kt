@@ -81,13 +81,14 @@ object HLTB {
         val rawPattern = postFilter.rawPattern
         if (rawPattern.isEmpty()) return list
         if (rawPattern.length > 500) return list
-        //CWE-1333
-        //SINK
         val matcher = Regex(rawPattern)
         val minLen = postFilter.minLength
         return list.filter { entry ->
             val gameName = entry.gameName
-            gameName.length >= minLen && matcher.containsMatchIn(gameName)
+            if (gameName.length < minLen) return@filter false
+            //CWE-1333
+            //SINK
+            matcher.containsMatchIn(gameName)
         }
     }
 
